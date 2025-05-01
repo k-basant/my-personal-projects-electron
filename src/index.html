@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gray-50 min-h-screen">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>My Link Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="icon" href="https://www.google.com/s2/favicons?sz=32&domain=dashboard.com">
+  </head>
+  <body class="font-inter bg-gray-50 min-h-screen flex flex-col">
+    <!-- Main App Root -->
+    <div id="app-root" class="min-h-screen flex flex-col"></div>
+    
+    <!-- Modals Container -->
+    <div id="modal-root"></div>
+    
+    <!-- JS Application below -->
+    <script>
+/** --------- Data Layer --------- **/
+
+const STORAGE_KEY = 'myLinkDashboard';
+
+/**
+ * Read the whole dashboard object from localStorage, or initialize if missing.
+ */
+function getDashboardData() {
+  let data = localStorage.getItem(STORAGE_KEY);
+  if (!data) {
+    const initial = { links: [] };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+    return initial;
+  }
+  try {
+    return JSON.parse(data);
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    const initial = { links: [] };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+    return initial;
+  }
+}
+
+/**
+ * Save the dashboard data to localStorage (entire object).
+ */
+function setDashboardData(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+/**
+ * Generate a unique ID (timestamp + random, for collision safety).
+ */
+function makeId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+}
+
+/**
+ * Utility: Format timestamp as YYYY-MM-DD HH:mm:ss
+ */
+function formatTimestamp(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+
+/**
+ * Utility: Deduce domain from a URL for favicon service.
+ */
+function extractDomain(url) {
+  try {
+    return new URL(url).hostname;
+  } catch { return url; }
+}
+
+/**
+ * Truncate a long URL for display, with ellipsis in middle.
+ */
+function truncateUrl(url, max = 44) {
+  if (url.length <= max) return url;
+  return url.slice(0, 20) + '…' + url.slice(-18);
+}
+
+/** --------- Rendering Layer --------- **/
+
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+const appRoot = document.getElementById('app-root');
+const modalRoot = document.getElementById('modal-root');
+
+/**
+ * Main render function.
+ */
+function renderApp() {
+  const { links } = getDashboardData();
+  // Sort: by last accessed desc, then by addedAt desc
+  const linksSorted = [...links].sort((a, b) => {
+    const la = a.accessHistory && a.accessHistory.length ? a.accessHistory[a.accessHistory.length-1].visitedAt : 0;
+    const lb = b.accessHistory && b.accessHistory.length ? b.accessHistory[b.accessHistory.length-1].visitedAt : 0;
+    if (lb !== la) return lb - la;
+    return b.addedAt - a.addedAt;
+  });
+  appRoot.innerHTML = `
+    <header class="w-full border-b bg-white sticky top-0 z-40 shadow-sm flex flex-col sm:flex-row items-center justify-between px-4 py-4 sm:px-8">
+      <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-sky-800 flex items-center space-x-2">
+        <svg class="w-6 h-6 text-sky-500 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.5 13a7.5 7.5 0 1012.99-6.049M16.5 11.5V5a2 2 0 00-2-2h-5A2 2 0 007 5v9m0 2v2a2 2 0 002 2h6a2 2 0 002-2v-2" /></svg>
+        <span>My Link Dashboard</span>
+      </h1>
+      <div class="flex items-center mt-4 sm:mt-0 gap-3">
+        <button id="exportJSON" class="inline-flex items-center px-3 py-1.5 rounded text-sky-600 hover:bg-sky-50 text-sm transition focus:outline-none border border-sky-100">
+          <svg class="mr-2 w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 20 20"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7H7v6h6V7z"><animate attributeName="fill" values="#0ea5e9;#0ea5e9;#0ea5e9" dur="2s" repeatCount="indefinite"/></path><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v12a2 2 0 002 2h8a2 2 0 002-2V4M4 4h12"/></svg>
+          Export JSON
+        </button>
+        <button id="addLinkBtn" class="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-sky-600 text-white font-medium hover:bg-sky-700 transition active:scale-95 shadow focus:ring focus:ring-sky-200 focus:outline-none text-base">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
+          Add Link
+        </button>
+      </div>
+    </header>
+    <main class="w-full flex-1 max-w-5xl mx-auto px-2 sm:px-6 py-6 overflow-x-clip">
+      ${linksSorted.length === 0 ? `
+        <div class="h-60 flex flex-col items-center justify-center gap-3 text-gray-500">
+          <svg class="w-16 h-16 text-sky-200 mb-3" fill="none" viewBox="0 0 24 24" stroke="#bae6fd"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.5 13a7.5 7.5 0 1012.99-6.049"/></svg>
+          <div class="font-medium text-lg">No links yet</div>
+          <div class="text-base">Click <span class="inline px-2 py-1 bg-sky-100 rounded text-sky-600 font-semibold">Add Link</span> to start your dashboard!</div>
+        </div>
+      ` : `
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+          ${linksSorted.map(link => renderLinkCard(link)).join('')}
+        </div>
+      `}
+    </main>
+  `;
+  // Add events
+  $('#addLinkBtn').onclick = showAddLinkModal;
+  $('#exportJSON').onclick = exportLinksAsJson;
+}
+
+/**
+ * Render Link card DOM string.
+ */
+function renderLinkCard(link) {
+  // Last accessed
+  let last = 'Never';
+  if (link.accessHistory && link.accessHistory.length) {
+    last = formatTimestamp(link.accessHistory[link.accessHistory.length - 1].visitedAt);
+  }
+  // Most visited styling: highlight if in top 3 by visit count
+  let highlightClass = '';
+  const { links } = getDashboardData();
+  let sortedByVisit = [...links].sort((a,b)=>(b.accessHistory?.length||0)-(a.accessHistory?.length||0));
+  if (sortedByVisit.findIndex(l=>l.id===link.id)<3 && (link.accessHistory?.length > 0)) {
+    highlightClass = 'ring-2 ring-sky-200 shadow-lg';
+  }
+  return `
+    <div class="bg-white rounded-xl p-5 transition group relative flex flex-col gap-3 border hover:shadow-xl hover:-translate-y-0.5 ${highlightClass}">
+      <!-- Favicon & Title/URL -->
+      <div class="flex gap-3 items-center">
+        <img src="https://www.google.com/s2/favicons?sz=64&domain=${extractDomain(link.url)}" class="w-8 h-8 mr-1 rounded shadow" loading="lazy" alt="favicon">
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-slate-900 mb-1 truncate" title="${link.title}">${link.title}</div>
+          <div class="text-sky-700 text-xs truncate max-w-xs" title="${link.url}">${truncateUrl(link.url)}</div>
+        </div>
+        <button title="Visit" aria-label="Visit Link" class="visit-link-btn ml-2 bg-sky-100 text-sky-600 hover:bg-sky-200 rounded-full p-2 transition" data-id="${link.id}">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 20 20"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6h4v4m0 5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </button>
+      </div>
+      <!-- Last accessed badge -->
+      <div class="text-xs text-gray-500 flex items-center gap-2">
+        🕙 <span>Last accessed: </span>
+        <span class="font-medium ${last==='Never'?'text-red-600':'text-sky-700'}">${last}</span>
+      </div>
+      <!-- Actions -->
+      <div class="flex gap-3 mt-4">
+        <button class="toggle-history-btn text-xs flex-1 px-2 py-1.5 rounded bg-slate-100 hover:bg-sky-50 text-sky-700 font-medium transition focus:outline-none" data-id="${link.id}">
+          <span class="history-toggle-label" id="history-label-${link.id}">Show History</span>
+        </button>
+        <button class="edit-link-btn text-xs px-2 py-1.5 rounded bg-sky-50 hover:bg-sky-100 text-sky-600 font-semibold transition focus:outline-none" data-id="${link.id}">
+          Edit
+        </button>
+        <button class="delete-link-btn text-xs px-2 py-1.5 rounded bg-red-50 hover:bg-red-100 text-red-600 font-semibold transition focus:outline-none" data-id="${link.id}">
+          Delete
+        </button>
+      </div>
+      <!-- Hidden history area -->
+      <div class="access-history-area mt-3 hidden" id="hist-${link.id}">
+        ${renderAccessHistory(link)}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render the access history table for a link.
+ */
+function renderAccessHistory(link) {
+  const hasAny = link.accessHistory && link.accessHistory.length > 0;
+  return `
+    <div class="p-3 bg-slate-50 rounded-xl border mt-1 text-xs">
+      <div class="flex items-center justify-between mb-2">
+        <div class="font-bold text-sky-900 flex items-center gap-1">Access History</div>
+        <button class="clear-hist-btn px-2 py-1 rounded bg-red-100 text-red-600 text-[11px] font-medium hover:bg-red-200 transition focus:outline-none" title="Clear History" data-id="${link.id}" ${!hasAny?'disabled style="opacity:.5"':''}>
+          Clear
+        </button>
+      </div>
+      ${!hasAny ? `
+        <div class="italic text-gray-400">No accesses yet.</div>
+      ` : `
+        <ol class="flex flex-col gap-1 max-h-36 overflow-y-auto pr-2" reversed>
+          ${[...link.accessHistory].map((h,i) => `<li>${formatTimestamp(h.visitedAt)}</li>`).reverse().join('')}
+        </ol>
+      `}
+    </div>
+  `;
+}
+
+/** --------- Modal Layer --------- **/
+
+function closeModal() {
+  modalRoot.innerHTML = '';
+  document.body.classList.remove('overflow-y-hidden');
+}
+
+/**
+ * Add Link Modal
+ */
+function showAddLinkModal(prefill = { title: '', url: '' }) {
+  // Modal bg
+  modalRoot.innerHTML = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center px-2">
+      <div class="fixed inset-0 bg-black/30 backdrop-blur"></div>
+      <div class="relative z-10 w-full max-w-md bg-white rounded-xl shadow-lg p-6 animate-fadeInUp">
+        <h2 class="text-xl font-semibold text-sky-800 mb-2">Add New Link</h2>
+        <form id="addLinkForm" class="flex flex-col gap-3" autocomplete="off">
+          <label class="block">
+            <span class="block font-semibold mb-1 text-sky-700">URL<span class="text-red-500 ml-0.5">*</span></span>
+            <input type="url" name="url" id="addLinkUrl" required placeholder="https://..." value="${prefill.url||''}" class="w-full text-sm px-3 py-2 rounded border bg-sky-50 focus:outline-sky-400 focus:ring-2 focus:ring-sky-200 transition">
+            <span id="urlHint" class="text-[11px] text-gray-400 mt-2"></span>
+          </label>
+          <label class="block">
+            <span class="block font-semibold mb-1 text-sky-700">Title<span class="text-red-500 ml-0.5">*</span></span>
+            <input type="text" name="title" id="addLinkTitle" required placeholder="Page Title" value="${prefill.title || ''}" class="w-full text-sm px-3 py-2 rounded border bg-sky-50 focus:outline-sky-400 focus:ring-2 focus:ring-sky-200 transition">
+            <span id="titleHint" class="text-[11px] text-gray-400"></span>
+          </label>
+          <div class="flex items-center justify-between pt-3 gap-4">
+            <button type="button" class="px-4 py-2 rounded font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 transition focus:outline-none" onclick="closeModal()">Cancel</button>
+            <button type="submit" id="addLinkSubmit" class="px-4 py-2 rounded font-medium bg-sky-600 text-white hover:bg-sky-700 transition focus:outline-none flex items-center gap-2">
+              <span>Add</span>
+              <svg id="addLinkLoading" class="w-4 h-4 ml-1 animate-spin hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle class="opacity-30" cx="12" cy="12" r="10" stroke="currentColor"/><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            </button>
+          </div>
+          <div class="pt-2 text-xs text-red-500 font-medium hidden" id="addLinkError"></div>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.classList.add('overflow-y-hidden');
+
+  const form = $('#addLinkForm');
+  const urlInput = $('#addLinkUrl');
+  const titleInput = $('#addLinkTitle');
+  const errorEl = $('#addLinkError');
+  const addBtn = $('#addLinkSubmit');
+  const loadingIcon = $('#addLinkLoading');
+  const urlHint = $('#urlHint');
+  const titleHint = $('#titleHint');
+  let lastUrlChecked = '';
+
+  // 'On blur' of URL, if valid and changed, try suggest title
+  urlInput.onblur = async () => {
+    const val = urlInput.value.trim();
+    if (!val || val === lastUrlChecked) return;
+    if (!/^https?:\/\//.test(val)) {
+      urlHint.textContent = 'URL must start with http:// or https://';
+      return;
+    }
+    urlHint.textContent = 'Fetching site title...';
+    titleInput.value = '';
+    // Try fetch, fallback
+    let gotTitle = '';
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 2200); // 2.2s limit
+      let resp = await fetch(val, { method: 'GET', signal: controller.signal, mode: 'cors' });
+      // If CORS fails, attempt HEAD
+      let text = '';
+      try { text = await resp.text(); }
+      catch { titleHint.textContent = 'Site unreachable or CORS blocked. Enter title manually.'; return; }
+      let htmlTitle = text.match(/<title>([^<]*)<\/title>/i);
+      if (htmlTitle) {
+        gotTitle = htmlTitle[1].trim();
+        titleHint.textContent = 'Auto-fetched from website';
+        titleInput.value = gotTitle;
+      } else {
+        titleHint.textContent = 'No <title> tag found on page. Enter manually.';
+      }
+    } catch {
+      titleHint.textContent = 'Site unreachable or CORS blocked. Enter title manually.';
+    }
+    lastUrlChecked = val;
+  };
+
+  // On submit: validate, check dupe URL, add
+  form.onsubmit = async e => {
+    e.preventDefault();
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+    let url = urlInput.value.trim();
+    let title = titleInput.value.trim();
+    if (!/^https?:\/\//.test(url)) {
+      errorEl.textContent = 'URL must start with http:// or https://';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!title) {
+      errorEl.textContent = 'Title is required';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const { links } = getDashboardData();
+    if (links.find(l=>l.url === url)) {
+      errorEl.textContent = 'That link is already on your dashboard.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    // Try auto-fetch Title if field empty, otherwise go ahead
+    if (!title) {
+      try {
+        urlHint.textContent = 'Fetching site title...';
+        addBtn.disabled = true;
+        loadingIcon.classList.remove('hidden');
+        let resp = await fetch(url, { mode: 'cors' });
+        let text = await resp.text();
+        let found = text.match(/<title>([^<]{2,90})<\/title>/i);
+        if (found) title = found[1].trim();
+      } catch {}
+    }
+
+    // Insert link
+    let newLink = {
+      id: makeId(),
+      title,
+      url,
+      addedAt: Date.now(),
+      accessHistory: []
+    };
+    const newLinks = [newLink, ...links];
+    setDashboardData({ links: newLinks });
+    closeModal();
+    renderApp();
+  };
+
+  // Keyboard trap - enter closes; escape closes modal
+  form.onkeydown = function(e) {
+    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Enter' && document.activeElement!==form.querySelector("[type='submit']") && document.activeElement!==titleInput && document.activeElement!==urlInput) {
+      e.preventDefault();
+      addBtn.click();
+    }
+  };
+}
+
+/**
+ * Edit Link Modal (almost same as add, but with values prefilled)
+ */
+function showEditLinkModal(link) {
+  modalRoot.innerHTML = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center px-2">
+      <div class="fixed inset-0 bg-black/30 backdrop-blur"></div>
+      <div class="relative z-10 w-full max-w-md bg-white rounded-xl shadow-lg p-6 animate-fadeInUp">
+        <h2 class="text-xl font-semibold text-sky-800 mb-2">Edit Link</h2>
+        <form id="editLinkForm" class="flex flex-col gap-3" autocomplete="off">
+          <label>
+            <span class="block font-semibold mb-1 text-sky-700">URL<span class="text-red-500 ml-0.5">*</span></span>
+            <input type="url" name="url" id="editLinkUrl" required value="${link.url}" class="w-full text-sm px-3 py-2 rounded border bg-sky-50 focus:outline-sky-400 focus:ring-2 focus:ring-sky-200 transition">
+            <span id="editUrlHint" class="text-[11px] text-gray-400"></span>
+          </label>
+          <label>
+            <span class="block font-semibold mb-1 text-sky-700">Title<span class="text-red-500 ml-0.5">*</span></span>
+            <input type="text" name="title" id="editLinkTitle" required value="${link.title}" class="w-full text-sm px-3 py-2 rounded border bg-sky-50 focus:outline-sky-400 focus:ring-2 focus:ring-sky-200 transition">
+            <span id="editTitleHint" class="text-[11px] text-gray-400"></span>
+          </label>
+          <div class="flex items-center justify-between pt-3 gap-4">
+            <button type="button" class="px-4 py-2 rounded font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 transition focus:outline-none" onclick="closeModal()">Cancel</button>
+            <button type="submit" id="editLinkSubmit" class="px-4 py-2 rounded font-medium bg-sky-600 text-white hover:bg-sky-700 transition focus:outline-none flex items-center gap-2">
+              <span>Save</span>
+              <svg id="editLinkLoading" class="w-4 h-4 ml-1 animate-spin hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle class="opacity-30" cx="12" cy="12" r="10" stroke="currentColor"/><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            </button>
+          </div>
+          <div class="pt-2 text-xs text-red-500 font-medium hidden" id="editLinkError"></div>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.classList.add('overflow-y-hidden');
+
+  const form = $('#editLinkForm');
+  const urlInput = $('#editLinkUrl');
+  const titleInput = $('#editLinkTitle');
+  const errorEl = $('#editLinkError');
+  const editBtn = $('#editLinkSubmit');
+  const loadingIcon = $('#editLinkLoading');
+  const urlHint = $('#editUrlHint');
+  const titleHint = $('#editTitleHint');
+
+  let lastUrlChecked = link.url;
+
+  // URL blur: check for new title
+  urlInput.onblur = async () => {
+    const val = urlInput.value.trim();
+    if (!val || val === lastUrlChecked) return;
+    if (!/^https?:\/\//.test(val)) {
+      urlHint.textContent = 'URL must start with http:// or https://';
+      return;
+    }
+    urlHint.textContent = 'Fetching site title...';
+    titleInput.value = '';
+    let gotTitle = '';
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 2200);
+      let resp = await fetch(val, { method: 'GET', signal: controller.signal, mode: 'cors' });
+      let text = '';
+      try { text = await resp.text(); }
+      catch { titleHint.textContent = 'Site unreachable or CORS blocked. Enter title manually.'; return; }
+      let htmlTitle = text.match(/<title>([^<]*)<\/title>/i);
+      if (htmlTitle) {
+        gotTitle = htmlTitle[1].trim();
+        titleHint.textContent = 'Auto-fetched from website';
+        titleInput.value = gotTitle;
+      } else {
+        titleHint.textContent = 'No <title> tag found on page. Enter manually.';
+      }
+    } catch {
+      titleHint.textContent = 'Site unreachable or CORS blocked. Enter title manually.';
+    }
+    lastUrlChecked = val;
+  };
+
+  form.onsubmit = e => {
+    e.preventDefault();
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+    const url = urlInput.value.trim();
+    const title = titleInput.value.trim();
+    if (!/^https?:\/\//.test(url)) {
+      errorEl.textContent = 'URL must start with http:// or https://';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!title) {
+      errorEl.textContent = 'Title is required';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const dashboard = getDashboardData();
+    if (dashboard.links.some(l => l.url==url && l.id!==link.id)) {
+      errorEl.textContent = 'Another link with this URL already exists.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    // Update
+    let linkIdx = dashboard.links.findIndex(l=>l.id===link.id);
+    if (linkIdx === -1) return;
+    dashboard.links[linkIdx].url = url;
+    dashboard.links[linkIdx].title = title;
+    setDashboardData(dashboard);
+    closeModal();
+    renderApp();
+  };
+
+  form.onkeydown = function(e) {
+    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Enter' && document.activeElement!==form.querySelector("[type='submit']") && document.activeElement!==titleInput && document.activeElement!==urlInput) {
+      e.preventDefault();
+      editBtn.click();
+    }
+  };
+}
+
+/**
+ * Prompt confirm modal (returns promise)
+ */
+function showConfirmModal({ title, message, onConfirm }) {
+  modalRoot.innerHTML = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center px-2">
+      <div class="fixed inset-0 bg-black/30 backdrop-blur"></div>
+      <div class="relative z-10 w-full max-w-md bg-white rounded-xl shadow-lg px-6 py-7 animate-fadeInUp flex flex-col">
+        <div class="text-lg font-semibold mb-3 text-sky-900">${title}</div>
+        <p class="text-gray-600 text-base mb-5">${message}</p>
+        <div class="flex justify-end gap-2">
+          <button class="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 focus:outline-none font-medium text-gray-600" id="cancelDelBtn">Cancel</button>
+          <button class="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700 focus:outline-none font-medium" id="confirmDelBtn">Delete</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.classList.add('overflow-y-hidden');
+  $('#cancelDelBtn').onclick = () => closeModal();
+  $('#confirmDelBtn').onclick = async () => {
+    closeModal();
+    if (onConfirm) onConfirm();
+  };
+}
+
+/** --------- Button Listeners --------- **/
+
+// Event Delegation for link cards
+appRoot.addEventListener('click', function(e) {
+  // Visit link
+  if (e.target.closest('.visit-link-btn')) {
+    const id = e.target.closest('.visit-link-btn').dataset.id;
+    visitLink(id);
+    return;
+  }
+  // Edit
+  if (e.target.closest('.edit-link-btn')) {
+    const id = e.target.closest('.edit-link-btn').dataset.id;
+    const link = getDashboardData().links.find(l=>l.id===id);
+    if (link) showEditLinkModal(link);
+    return;
+  }
+  // Delete
+  if (e.target.closest('.delete-link-btn')) {
+    const id = e.target.closest('.delete-link-btn').dataset.id;
+    const { links } = getDashboardData();
+    const me = links.find(l=>l.id===id);
+    if (!me) return;
+    showConfirmModal({
+      title: 'Delete Link',
+      message: `<strong>${me.title}</strong> will be deleted and <b>all its access history</b> erased. Are you sure?`,
+      onConfirm: () => {
+        const links2 = links.filter(l => l.id!==id);
+        setDashboardData({ links: links2 });
+        renderApp();
+      }
+    });
+    return;
+  }
+  // Toggle history
+  if (e.target.closest('.toggle-history-btn')) {
+    const btn = e.target.closest('.toggle-history-btn');
+    const id = btn.dataset.id;
+    const area = $('#hist-'+id);
+    if (!area) return;
+    const nowVisible = area.classList.contains('hidden');
+    area.classList.toggle('hidden');
+    const lbl = document.getElementById('history-label-'+id);
+    if (lbl) lbl.textContent = nowVisible ? 'Hide History' : 'Show History';
+    return;
+  }
+  // Clear history
+  if (e.target.closest('.clear-hist-btn')) {
+    const id = e.target.closest('.clear-hist-btn').dataset.id;
+    showConfirmModal({
+      title: 'Clear History',
+      message: 'Really clear all access records for this link?',
+      onConfirm: () => {
+        const dashboard = getDashboardData();
+        const link = dashboard.links.find(l=>l.id===id);
+        if (link) link.accessHistory = [];
+        setDashboardData(dashboard);
+        renderApp();
+        // auto expand history to let user see cleared state
+        setTimeout(() => {
+          const btn = $(`.toggle-history-btn[data-id="${id}"]`);
+          if (btn) btn.click();
+        }, 50);
+      }
+    });
+    return;
+  }
+});
+
+/**
+ * Visit link: open in _blank, record access
+ */
+function visitLink(id) {
+  const dashboard = getDashboardData();
+  const link = dashboard.links.find(l=>l.id===id);
+  if (!link) return;
+  window.open(link.url, '_blank', 'noopener noreferrer');
+  // Add history
+  link.accessHistory = link.accessHistory || [];
+  link.accessHistory.push({ visitedAt: Date.now() });
+  setDashboardData(dashboard);
+  renderApp();
+}
+
+/**
+ * Export links as JSON file.
+ */
+function exportLinksAsJson() {
+  const { links } = getDashboardData();
+  const data = JSON.stringify({ links }, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  let a = document.createElement('a');
+  a.href = url;
+  a.download = `my_dashboard_links_${(new Date()).toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },1000);
+}
+
+/** --------- Startup --------- **/
+
+// Style for fade-in modal
+const sheet = document.createElement('style');
+sheet.innerHTML = `
+  @keyframes fadeInUp {
+    0% { opacity: 0; transform: translateY(40px);}
+    100% { opacity: 1; transform: translateY(0);}
+  }
+  .animate-fadeInUp { animation: fadeInUp .24s cubic-bezier(.33,.6,.33,1.01);}
+`;
+document.head.appendChild(sheet);
+
+// Render initial app
+renderApp();
+
+    </script>
+  </body>
+</html>
