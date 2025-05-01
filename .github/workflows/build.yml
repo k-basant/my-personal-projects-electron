@@ -27,8 +27,8 @@ jobs:
       - name: Build distributables
         run: npm run make
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: my-personal-projects-${{ matrix.os }}
-          path: out/make
+      # - name: Upload artifacts
+      #   uses: actions/upload-artifact@v3
+      #   with:
+      #     name: my-personal-projects-${{ matrix.os }}
+      #     path: out/make
